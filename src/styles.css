@@ -205,7 +205,7 @@ button {
   background: #fffbeb;
 }
 
-.card.status-complete {
+.card.status-completed {
   border-left-color: #16831a;
   background: #f0fdf4;
 }
@@ -260,7 +260,7 @@ button {
   color: #92400e;
 }
 
-.status-pill.status-complete {
+.status-pill.status-completed {
   background: #dcfce7;
   color: #166534;
 }
