@@ -437,8 +437,8 @@ function renderModal() {
               <option ${item.status === 'Ongoing' ? 'selected' : ''}>
                 Ongoing
               </option>
-              <option ${item.status === 'Completed' ? 'selected' : ''}>
-                Completed
+              <option ${item.status === 'Complete' ? 'selected' : ''}>
+                Complete
               </option>
               <option ${item.status === 'Blocked' ? 'selected' : ''}>
                 Blocked
