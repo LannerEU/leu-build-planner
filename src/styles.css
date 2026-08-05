@@ -195,6 +195,11 @@ button {
   box-shadow: 0 6px 16px rgba(15, 23, 42, 0.08);
 }
 
+.card.status-request {
+  border-left-color: #7c3aed;
+  background: #faf5ff;
+}
+
 .card.status-planned {
   border-left-color: #0b70c9;
   background: #ffffff;
@@ -205,19 +210,19 @@ button {
   background: #fffbeb;
 }
 
-.card.status-complete {
+.card.status-completed {
   border-left-color: #16831a;
   background: #f0fdf4;
 }
 
-.card.status-blocked {
+.card.status-delayed {
   border-left-color: #dc2626;
   background: #fef2f2;
 }
 
 .card.status-on-leave {
-  border-left-color: #7c3aed;
-  background: #f5f3ff;
+  border-left-color: #64748b;
+  background: #f1f5f9;
 }
 
 .card[draggable="true"] {
@@ -250,6 +255,11 @@ button {
   line-height: 1;
 }
 
+.status-pill.status-request {
+  background: #ede9fe;
+  color: #6d28d9;
+}
+
 .status-pill.status-planned {
   background: #dbeafe;
   color: #1d4ed8;
@@ -260,26 +270,39 @@ button {
   color: #92400e;
 }
 
-.status-pill.status-complete {
+.status-pill.status-completed {
   background: #dcfce7;
   color: #166534;
 }
 
-.status-pill.status-blocked {
+.status-pill.status-delayed {
   background: #fee2e2;
   color: #991b1b;
 }
 
 .status-pill.status-on-leave {
-  background: #ede9fe;
-  color: #6d28d9;
+  background: #e2e8f0;
+  color: #334155;
 }
 
 .card-notes {
-  margin-top: 7px;
-  color: #334155;
+  margin-top: 9px;
+  padding: 8px 9px;
+  border: 1px solid #f2ce68;
+  border-radius: 7px;
+  background: #fff7d6;
+  color: #5f4700;
   font-size: 0.82rem;
   white-space: pre-wrap;
+}
+
+.note-label {
+  margin-bottom: 3px;
+  color: #7c5700;
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
 }
 
 .card-actions {
