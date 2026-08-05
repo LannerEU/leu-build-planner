@@ -1,6 +1,7 @@
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
+const STATUSES = ['Request', 'Planned', 'Ongoing', 'Completed', 'Delayed', 'On Leave'];
 const WEEKS_PER_PAGE = 5;
 const supabaseUrl = window.LEU_PLANNER_CONFIG?.supabaseUrl;
 const supabaseKey = window.LEU_PLANNER_CONFIG?.supabaseAnonKey;
@@ -8,8 +9,8 @@ const hasSupabase = Boolean(supabaseUrl && supabaseKey);
 const supabase = hasSupabase ? createClient(supabaseUrl, supabaseKey) : null;
 
 const sampleItems = [
-  ['Navugo-1515F-1x', 32, 'Monday', 'Complete'],
-  ['Re-label-2137C', 32, 'Monday', 'Complete'],
+  ['Navugo-1515F-1x', 32, 'Monday', 'Completed'],
+  ['Re-label-2137C', 32, 'Monday', 'Completed'],
   ['Cobbler-1040-10x', 32, 'Tuesday', 'Planned'],
   ['RMA-5520C-1x', 32, 'Wednesday', 'Planned'],
   ['E-Cubed-4240B-1x', 32, 'Wednesday', 'Planned'],
@@ -99,12 +100,18 @@ function getStatusClass(status = 'Planned') {
   return `status-${String(status).toLowerCase().replace(/\s+/g, '-')}`;
 }
 
+function normalizeLegacyStatus(status) {
+  if (status === 'Complete') return 'Completed';
+  if (status === 'Blocked') return 'Delayed';
+  return status || 'Planned';
+}
+
 async function loadItems() {
   state.busy = true;
   render();
 
   if (!hasSupabase) {
-    state.items = localLoad();
+    state.items = localLoad().map(item => ({ ...item, status: normalizeLegacyStatus(item.status) }));
   } else {
     const { data, error } = await supabase
       .from('build_items')
@@ -116,7 +123,7 @@ async function loadItems() {
     if (error) {
       state.message = `Could not load shared schedule: ${error.message}`;
     } else {
-      state.items = data || [];
+      state.items = (data || []).map(item => ({ ...item, status: normalizeLegacyStatus(item.status) }));
     }
   }
 
@@ -292,7 +299,8 @@ function renderDay(week, day) {
 }
 
 function renderCard(item) {
-  const statusClass = getStatusClass(item.status);
+  const status = normalizeLegacyStatus(item.status);
+  const statusClass = getStatusClass(status);
 
   return `
     <article
@@ -304,13 +312,13 @@ function renderCard(item) {
 
       <div class="card-meta">
         <span class="status-pill ${statusClass}">
-          ${escapeHtml(item.status)}
+          ${escapeHtml(status)}
         </span>
       </div>
 
       ${
         item.notes
-          ? `<div class="card-notes">${escapeHtml(item.notes)}</div>`
+          ? `<div class="card-notes"><div class="note-label">💬 Note</div><div>${escapeHtml(item.notes)}</div></div>`
           : ''
       }
 
@@ -389,6 +397,8 @@ function renderModal() {
     sort_order: Date.now()
   };
 
+  const selectedStatus = normalizeLegacyStatus(item.status);
+
   return `
     <div class="modal-backdrop">
       <form class="modal" id="item-form">
@@ -431,21 +441,7 @@ function renderModal() {
           <div class="field">
             <label>Status</label>
             <select name="status">
-              <option ${item.status === 'Planned' ? 'selected' : ''}>
-                Planned
-              </option>
-              <option ${item.status === 'Ongoing' ? 'selected' : ''}>
-                Ongoing
-              </option>
-              <option ${item.status === 'Complete' ? 'selected' : ''}>
-                Complete
-              </option>
-              <option ${item.status === 'Blocked' ? 'selected' : ''}>
-                Blocked
-              </option>
-              <option ${item.status === 'On Leave' ? 'selected' : ''}>
-                On Leave
-              </option>
+              ${STATUSES.map(status => `<option ${status === selectedStatus ? 'selected' : ''}>${status}</option>`).join('')}
             </select>
           </div>
 
@@ -669,7 +665,7 @@ async function importJson(event) {
           title,
           week: Number(week),
           day,
-          status,
+          status: normalizeLegacyStatus(status),
           notes: notes || '',
           sort_order: Number(sort_order || Date.now())
         })
@@ -680,7 +676,7 @@ async function importJson(event) {
 
       await loadItems();
     } else {
-      state.items = parsed;
+      state.items = parsed.map(item => ({ ...item, status: normalizeLegacyStatus(item.status) }));
       localSave();
       render();
     }
