@@ -3,6 +3,8 @@ import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
 const STATUSES = ['Request', 'Planned', 'Ongoing', 'Completed', 'Delayed', 'On Leave'];
 const WEEKS_PER_PAGE = 5;
+const PLANNER_YEAR = 2026;
+
 const supabaseUrl = window.LEU_PLANNER_CONFIG?.supabaseUrl;
 const supabaseKey = window.LEU_PLANNER_CONFIG?.supabaseAnonKey;
 const hasSupabase = Boolean(supabaseUrl && supabaseKey);
@@ -36,7 +38,7 @@ const sampleItems = [
   day,
   status,
   notes: '',
-  sort_order: i
+  sort_order: (i + 1) * 1000
 }));
 
 const state = {
@@ -45,7 +47,8 @@ const state = {
   user: null,
   modal: null,
   busy: false,
-  message: ''
+  message: '',
+  draggedId: null
 };
 
 const localKey = 'leu-build-planner-items-v1';
@@ -106,12 +109,40 @@ function normalizeLegacyStatus(status) {
   return status || 'Planned';
 }
 
+function getIsoWeekDate(year, week, dayIndex) {
+  const january4 = new Date(Date.UTC(year, 0, 4));
+  const january4Day = january4.getUTCDay() || 7;
+
+  const firstMonday = new Date(january4);
+  firstMonday.setUTCDate(january4.getUTCDate() - january4Day + 1);
+
+  const result = new Date(firstMonday);
+  result.setUTCDate(firstMonday.getUTCDate() + (week - 1) * 7 + dayIndex);
+
+  return result;
+}
+
+function formatPlannerDate(week, day) {
+  const dayIndex = DAYS.indexOf(day);
+  if (dayIndex < 0) return '';
+
+  const date = getIsoWeekDate(PLANNER_YEAR, week, dayIndex);
+
+  return new Intl.DateTimeFormat('en-GB', {
+    day: '2-digit',
+    month: '2-digit'
+  }).format(date);
+}
+
 async function loadItems() {
   state.busy = true;
   render();
 
   if (!hasSupabase) {
-    state.items = localLoad().map(item => ({ ...item, status: normalizeLegacyStatus(item.status) }));
+    state.items = localLoad().map(item => ({
+      ...item,
+      status: normalizeLegacyStatus(item.status)
+    }));
   } else {
     const { data, error } = await supabase
       .from('build_items')
@@ -123,7 +154,10 @@ async function loadItems() {
     if (error) {
       state.message = `Could not load shared schedule: ${error.message}`;
     } else {
-      state.items = (data || []).map(item => ({ ...item, status: normalizeLegacyStatus(item.status) }));
+      state.items = (data || []).map(item => ({
+        ...item,
+        status: normalizeLegacyStatus(item.status)
+      }));
     }
   }
 
@@ -191,17 +225,98 @@ async function removeItem(id) {
   }
 }
 
-async function moveItem(id, week, day) {
+function clearDropIndicators() {
+  document
+    .querySelectorAll('.card.drop-before, .card.drop-after')
+    .forEach(card => card.classList.remove('drop-before', 'drop-after'));
+
+  document
+    .querySelectorAll('.day-cell.drag-over')
+    .forEach(cell => cell.classList.remove('drag-over'));
+}
+
+async function reorderItem(id, targetWeek, targetDay, targetId = null, placeAfter = false) {
   if (!isAdmin()) return;
 
-  const item = state.items.find(existing => String(existing.id) === String(id));
-  if (!item) return;
+  const dragged = state.items.find(item => String(item.id) === String(id));
+  if (!dragged) return;
 
-  try {
-    await saveItem({ ...item, week, day });
-    setMessage(`Moved to ${day}, week ${week}.`);
-  } catch (error) {
-    setMessage(error.message);
+  const sourceWeek = Number(dragged.week);
+  const sourceDay = dragged.day;
+
+  const destinationItems = state.items
+    .filter(
+      item =>
+        Number(item.week) === Number(targetWeek) &&
+        item.day === targetDay &&
+        String(item.id) !== String(id)
+    )
+    .sort(
+      (first, second) =>
+        (first.sort_order || 0) - (second.sort_order || 0)
+    );
+
+  let insertIndex = destinationItems.length;
+
+  if (targetId) {
+    const targetIndex = destinationItems.findIndex(
+      item => String(item.id) === String(targetId)
+    );
+
+    if (targetIndex >= 0) {
+      insertIndex = targetIndex + (placeAfter ? 1 : 0);
+    }
+  }
+
+  const reordered = [...destinationItems];
+  reordered.splice(insertIndex, 0, {
+    ...dragged,
+    week: Number(targetWeek),
+    day: targetDay
+  });
+
+  const normalizedDestination = reordered.map((item, index) => ({
+    ...item,
+    week: Number(targetWeek),
+    day: targetDay,
+    sort_order: (index + 1) * 1000
+  }));
+
+  if (!hasSupabase) {
+    const changedById = new Map(
+      normalizedDestination.map(item => [String(item.id), item])
+    );
+
+    state.items = state.items.map(item =>
+      changedById.get(String(item.id)) || item
+    );
+
+    localSave();
+    render();
+  } else {
+    const updates = await Promise.all(
+      normalizedDestination.map(item =>
+        supabase
+          .from('build_items')
+          .update({
+            week: Number(item.week),
+            day: item.day,
+            sort_order: Number(item.sort_order)
+          })
+          .eq('id', item.id)
+      )
+    );
+
+    const failed = updates.find(result => result.error);
+    if (failed?.error) throw failed.error;
+
+    await loadItems();
+  }
+
+  if (sourceWeek === Number(targetWeek) && sourceDay === targetDay) {
+    setMessage(`Reordered ${targetDay}, week ${targetWeek}.`);
+  } else {
+    setMessage(`Moved to ${targetDay}, week ${targetWeek}.`);
   }
 }
 
@@ -224,7 +339,7 @@ function render() {
       </header>
 
       <div class="notice">
-        Viewer mode is read-only. Admin users can add, edit, remove, and drag schedule cards.
+        Viewer mode is read-only. Admin users can add, edit, remove, drag schedule cards, and reorder builds within the same day.
         ${
           hasSupabase
             ? 'Changes are shared with the team after refresh.'
@@ -249,7 +364,7 @@ function render() {
         <span class="spacer"></span>
 
         <button class="btn" data-action="previous">← Previous</button>
-        <span class="week-label">Weeks ${weeks[0]} - ${weeks.at(-1)}</span>
+        <span class="week-label">Weeks ${weeks[0]} - ${weeks.at(-1)} · ${PLANNER_YEAR}</span>
         <button class="btn" data-action="next">Next →</button>
       </section>
 
@@ -289,6 +404,8 @@ function renderDay(week, day) {
 
   return `
     <div class="cell day-cell" data-week="${week}" data-day="${day}">
+      <div class="cell-date">${formatPlannerDate(week, day)}</div>
+
       ${
         items.length
           ? items.map(renderCard).join('')
@@ -441,7 +558,10 @@ function renderModal() {
           <div class="field">
             <label>Status</label>
             <select name="status">
-              ${STATUSES.map(status => `<option ${status === selectedStatus ? 'selected' : ''}>${status}</option>`).join('')}
+              ${STATUSES.map(
+                status =>
+                  `<option ${status === selectedStatus ? 'selected' : ''}>${status}</option>`
+              ).join('')}
             </select>
           </div>
 
@@ -483,32 +603,108 @@ function bindEvents() {
 
   document
     .querySelectorAll('.card[draggable="true"]')
-    .forEach(card =>
-      card.addEventListener('dragstart', event =>
-        event.dataTransfer.setData('text/plain', card.dataset.id)
-      )
-    );
+    .forEach(card => {
+      card.addEventListener('dragstart', event => {
+        state.draggedId = card.dataset.id;
+        event.dataTransfer.effectAllowed = 'move';
+        event.dataTransfer.setData('text/plain', card.dataset.id);
+        card.classList.add('dragging');
+      });
+
+      card.addEventListener('dragend', () => {
+        state.draggedId = null;
+        card.classList.remove('dragging');
+        clearDropIndicators();
+      });
+
+      card.addEventListener('dragover', event => {
+        if (!isAdmin()) return;
+        if (String(card.dataset.id) === String(state.draggedId)) return;
+
+        event.preventDefault();
+        event.stopPropagation();
+
+        clearDropIndicators();
+
+        const rect = card.getBoundingClientRect();
+        const placeAfter = event.clientY > rect.top + rect.height / 2;
+
+        card.classList.add(placeAfter ? 'drop-after' : 'drop-before');
+      });
+
+      card.addEventListener('drop', async event => {
+        if (!isAdmin()) return;
+
+        event.preventDefault();
+        event.stopPropagation();
+
+        const draggedId =
+          event.dataTransfer.getData('text/plain') || state.draggedId;
+
+        if (!draggedId || String(draggedId) === String(card.dataset.id)) {
+          clearDropIndicators();
+          return;
+        }
+
+        const cell = card.closest('.day-cell');
+        const placeAfter = card.classList.contains('drop-after');
+
+        clearDropIndicators();
+
+        try {
+          await reorderItem(
+            draggedId,
+            Number(cell.dataset.week),
+            cell.dataset.day,
+            card.dataset.id,
+            placeAfter
+          );
+        } catch (error) {
+          setMessage(error.message);
+        }
+      });
+    });
 
   document.querySelectorAll('.day-cell').forEach(cell => {
     cell.addEventListener('dragover', event => {
       if (!isAdmin()) return;
+
       event.preventDefault();
-      cell.classList.add('drag-over');
+
+      if (!event.target.closest('.card')) {
+        clearDropIndicators();
+        cell.classList.add('drag-over');
+      }
     });
 
-    cell.addEventListener('dragleave', () =>
-      cell.classList.remove('drag-over')
-    );
+    cell.addEventListener('dragleave', event => {
+      if (!cell.contains(event.relatedTarget)) {
+        cell.classList.remove('drag-over');
+      }
+    });
 
-    cell.addEventListener('drop', event => {
+    cell.addEventListener('drop', async event => {
+      if (!isAdmin()) return;
+      if (event.target.closest('.card')) return;
+
       event.preventDefault();
-      cell.classList.remove('drag-over');
 
-      moveItem(
-        event.dataTransfer.getData('text/plain'),
-        Number(cell.dataset.week),
-        cell.dataset.day
-      );
+      const draggedId =
+        event.dataTransfer.getData('text/plain') || state.draggedId;
+
+      clearDropIndicators();
+
+      if (!draggedId) return;
+
+      try {
+        await reorderItem(
+          draggedId,
+          Number(cell.dataset.week),
+          cell.dataset.day
+        );
+      } catch (error) {
+        setMessage(error.message);
+      }
     });
   });
 }
@@ -676,7 +872,11 @@ async function importJson(event) {
 
       await loadItems();
     } else {
-      state.items = parsed.map(item => ({ ...item, status: normalizeLegacyStatus(item.status) }));
+      state.items = parsed.map(item => ({
+        ...item,
+        status: normalizeLegacyStatus(item.status)
+      }));
+
       localSave();
       render();
     }
