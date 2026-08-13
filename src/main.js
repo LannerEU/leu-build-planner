@@ -18,19 +18,7 @@ const sampleItems = [
   ['E-Cubed-4240B-1x', 32, 'Wednesday', 'Planned'],
   ['Neeco-1515A-4x', 32, 'Thursday', 'Planned'],
   ['Dynacon-6041B-3x', 32, 'Thursday', 'Planned'],
-  ['Dynacon-6041B-7x', 32, 'Friday', 'Planned'],
-  ['Tentative Off - 11-14', 33, 'Tuesday', 'On Leave'],
-  ['Tentative Off - 11-14', 33, 'Wednesday', 'On Leave'],
-  ['Tentative Off - 11-14', 33, 'Thursday', 'On Leave'],
-  ['Tentative Off - 11-14', 33, 'Friday', 'On Leave'],
-  ['Neox-6530A-1x', 34, 'Monday', 'Planned'],
-  ['RazorSecure-P375-2x', 34, 'Monday', 'Planned'],
-  ['RazorSecure-P375-3x', 34, 'Tuesday', 'Planned'],
-  ['DFS-EAI-I132B-1x', 34, 'Tuesday', 'Planned'],
-  ['RMA-4POS-I732B-1x', 34, 'Wednesday', 'Planned'],
-  ['Dynacon-4012A-4x', 34, 'Wednesday', 'Planned'],
-  ['Dynacon-5520-7x', 34, 'Thursday', 'Planned'],
-  ['Dynacon-5520-3x', 34, 'Friday', 'Planned']
+  ['Dynacon-6041B-7x', 32, 'Friday', 'Planned']
 ].map(([title, week, day, status], i) => ({
   id: `sample-${i}`,
   title,
@@ -38,7 +26,11 @@ const sampleItems = [
   day,
   status,
   notes: '',
-  sort_order: (i + 1) * 1000
+  sort_order: (i + 1) * 1000,
+  shipping_required: false,
+  shipped: false,
+  for_billing: false,
+  billed: false
 }));
 
 const state = {
@@ -109,6 +101,15 @@ function normalizeLegacyStatus(status) {
   return status || 'Planned';
 }
 
+function normalizeTracking(item) {
+  return {
+    shipping_required: Boolean(item.shipping_required),
+    shipped: Boolean(item.shipped),
+    for_billing: Boolean(item.for_billing),
+    billed: Boolean(item.billed)
+  };
+}
+
 function getIsoWeekDate(year, week, dayIndex) {
   const january4 = new Date(Date.UTC(year, 0, 4));
   const january4Day = january4.getUTCDay() || 7;
@@ -134,6 +135,37 @@ function formatPlannerDate(week, day) {
   }).format(date);
 }
 
+function getVisibleWeeks() {
+  return Array.from(
+    { length: WEEKS_PER_PAGE },
+    (_, index) => state.startWeek + index
+  );
+}
+
+function getVisibleItems() {
+  const visibleWeeks = new Set(getVisibleWeeks().map(Number));
+  return state.items.filter(item => visibleWeeks.has(Number(item.week)));
+}
+
+function getVisibleSummary() {
+  const items = getVisibleItems();
+
+  const statusCounts = Object.fromEntries(
+    STATUSES.map(status => [
+      status,
+      items.filter(item => normalizeLegacyStatus(item.status) === status).length
+    ])
+  );
+
+  return {
+    statusCounts,
+    shippingBox: items.filter(item => item.shipping_required && !item.shipped).length,
+    shipped: items.filter(item => item.shipped).length,
+    forBilling: items.filter(item => item.for_billing && !item.billed).length,
+    billed: items.filter(item => item.billed).length
+  };
+}
+
 async function loadItems() {
   state.busy = true;
   render();
@@ -141,7 +173,8 @@ async function loadItems() {
   if (!hasSupabase) {
     state.items = localLoad().map(item => ({
       ...item,
-      status: normalizeLegacyStatus(item.status)
+      status: normalizeLegacyStatus(item.status),
+      ...normalizeTracking(item)
     }));
   } else {
     const { data, error } = await supabase
@@ -156,7 +189,8 @@ async function loadItems() {
     } else {
       state.items = (data || []).map(item => ({
         ...item,
-        status: normalizeLegacyStatus(item.status)
+        status: normalizeLegacyStatus(item.status),
+        ...normalizeTracking(item)
       }));
     }
   }
@@ -188,7 +222,11 @@ async function saveItem(item) {
     day: item.day,
     status: item.status,
     notes: item.notes || '',
-    sort_order: Number(item.sort_order || 0)
+    sort_order: Number(item.sort_order || 0),
+    shipping_required: Boolean(item.shipping_required),
+    shipped: Boolean(item.shipped),
+    for_billing: Boolean(item.for_billing),
+    billed: Boolean(item.billed)
   };
 
   if (item.id) {
@@ -240,9 +278,6 @@ async function reorderItem(id, targetWeek, targetDay, targetId = null, placeAfte
 
   const dragged = state.items.find(item => String(item.id) === String(id));
   if (!dragged) return;
-
-  const sourceWeek = Number(dragged.week);
-  const sourceDay = dragged.day;
 
   const destinationItems = state.items
     .filter(
@@ -313,18 +348,68 @@ async function reorderItem(id, targetWeek, targetDay, targetId = null, placeAfte
     await loadItems();
   }
 
-  if (sourceWeek === Number(targetWeek) && sourceDay === targetDay) {
-    setMessage(`Reordered ${targetDay}, week ${targetWeek}.`);
-  } else {
-    setMessage(`Moved to ${targetDay}, week ${targetWeek}.`);
-  }
+  setMessage('Schedule order updated.');
+}
+
+function renderSummarySidebar() {
+  const weeks = getVisibleWeeks();
+  const summary = getVisibleSummary();
+
+  const statusRows = STATUSES.map(status => `
+    <div class="summary-row">
+      <span class="summary-label">
+        <span class="summary-dot ${getStatusClass(status)}"></span>
+        ${status}
+      </span>
+      <strong>${summary.statusCounts[status]}</strong>
+    </div>
+  `).join('');
+
+  return `
+    <aside class="summary-sidebar">
+      <section class="summary-card">
+        <h3>Summary <span>(Weeks ${weeks[0]}–${weeks.at(-1)})</span></h3>
+        <div class="summary-list">
+          ${statusRows}
+        </div>
+      </section>
+
+      <section class="summary-card">
+        <h3>Shipping & Billing</h3>
+        <div class="summary-list">
+          <div class="summary-row">
+            <span class="summary-label">📦 Shipping Box</span>
+            <strong>${summary.shippingBox}</strong>
+          </div>
+          <div class="summary-row">
+            <span class="summary-label">✓ Shipped</span>
+            <strong>${summary.shipped}</strong>
+          </div>
+          <div class="summary-row">
+            <span class="summary-label">🧾 For Billing</span>
+            <strong>${summary.forBilling}</strong>
+          </div>
+          <div class="summary-row">
+            <span class="summary-label">✓ Billed</span>
+            <strong>${summary.billed}</strong>
+          </div>
+        </div>
+      </section>
+
+      <section class="summary-card quick-notes">
+        <h3>Quick Notes</h3>
+        <ul>
+          <li>Counts include all five visible weeks.</li>
+          <li>Drag cards between days or reorder builds within the same day.</li>
+          <li>Shipping and billing counts update automatically.</li>
+        </ul>
+      </section>
+    </aside>
+  `;
 }
 
 function render() {
-  const weeks = Array.from(
-    { length: WEEKS_PER_PAGE },
-    (_, index) => state.startWeek + index
-  );
+  const weeks = getVisibleWeeks();
 
   app.innerHTML = `
     <main class="shell">
@@ -340,11 +425,7 @@ function render() {
 
       <div class="notice">
         Viewer mode is read-only. Admin users can add, edit, remove, drag schedule cards, and reorder builds within the same day.
-        ${
-          hasSupabase
-            ? 'Changes are shared with the team after refresh.'
-            : 'This demo is using browser storage; connect Supabase for team-wide shared data.'
-        }
+        ${hasSupabase ? 'Changes are shared with the team after refresh.' : 'This demo is using browser storage.'}
       </div>
 
       <section class="toolbar">
@@ -372,20 +453,24 @@ function render() {
         ${state.busy ? 'Loading…' : escapeHtml(state.message)}
       </div>
 
-      <section class="planner-wrap">
-        <div class="planner">
-          <div class="cell header-cell">Week</div>
-          ${DAYS.map(day => `<div class="cell header-cell">${day}</div>`).join('')}
-          ${weeks
-            .map(
-              week => `
-                <div class="cell week-number">${week}</div>
-                ${DAYS.map(day => renderDay(week, day)).join('')}
-              `
-            )
-            .join('')}
-        </div>
-      </section>
+      <div class="content-layout">
+        <section class="planner-wrap">
+          <div class="planner">
+            <div class="cell header-cell">Week</div>
+            ${DAYS.map(day => `<div class="cell header-cell">${day}</div>`).join('')}
+            ${weeks
+              .map(
+                week => `
+                  <div class="cell week-number">${week}</div>
+                  ${DAYS.map(day => renderDay(week, day)).join('')}
+                `
+              )
+              .join('')}
+          </div>
+        </section>
+
+        ${renderSummarySidebar()}
+      </div>
     </main>
 
     ${renderModal()}
@@ -415,6 +500,30 @@ function renderDay(week, day) {
   `;
 }
 
+function renderTracking(item) {
+  const chips = [];
+
+  if (item.shipping_required && !item.shipped) {
+    chips.push(`<span class="tracking-chip shipping">📦 Shipping</span>`);
+  }
+
+  if (item.shipped) {
+    chips.push(`<span class="tracking-chip shipped">✓ Shipped</span>`);
+  }
+
+  if (item.for_billing && !item.billed) {
+    chips.push(`<span class="tracking-chip billing">🧾 For Billing</span>`);
+  }
+
+  if (item.billed) {
+    chips.push(`<span class="tracking-chip billed">✓ Billed</span>`);
+  }
+
+  return chips.length
+    ? `<div class="tracking-row">${chips.join('')}</div>`
+    : '';
+}
+
 function renderCard(item) {
   const status = normalizeLegacyStatus(item.status);
   const statusClass = getStatusClass(status);
@@ -433,6 +542,8 @@ function renderCard(item) {
         </span>
       </div>
 
+      ${renderTracking(item)}
+
       ${
         item.notes
           ? `<div class="card-notes"><div class="note-label">💬 Note</div><div>${escapeHtml(item.notes)}</div></div>`
@@ -443,12 +554,8 @@ function renderCard(item) {
         isAdmin()
           ? `
             <div class="card-actions">
-              <button class="link-btn" data-action="edit" data-id="${item.id}">
-                Edit
-              </button>
-              <button class="link-btn" data-action="remove" data-id="${item.id}">
-                Remove
-              </button>
+              <button class="link-btn" data-action="edit" data-id="${item.id}">Edit</button>
+              <button class="link-btn" data-action="remove" data-id="${item.id}">Remove</button>
             </div>
           `
           : ''
@@ -468,36 +575,20 @@ function renderModal() {
 
           <div class="field">
             <label>Email</label>
-            <input
-              name="email"
-              type="email"
-              required
-              autocomplete="username"
-            >
+            <input name="email" type="email" required autocomplete="username">
           </div>
 
           <div class="field" style="margin-top:12px">
             <label>Password</label>
-            <input
-              name="password"
-              type="password"
-              required
-              autocomplete="current-password"
-            >
+            <input name="password" type="password" required autocomplete="current-password">
           </div>
 
           <div class="login-note">
-            ${
-              hasSupabase
-                ? 'Use an admin account created in Supabase Authentication.'
-                : 'Demo mode: enter any email and password to enable local admin mode.'
-            }
+            ${hasSupabase ? 'Use an admin account created in Supabase Authentication.' : 'Demo mode.'}
           </div>
 
           <div class="modal-actions">
-            <button type="button" class="btn" data-action="close-modal">
-              Cancel
-            </button>
+            <button type="button" class="btn" data-action="close-modal">Cancel</button>
             <button class="btn primary">Sign in</button>
           </div>
         </form>
@@ -511,7 +602,11 @@ function renderModal() {
     day: 'Monday',
     status: 'Planned',
     notes: '',
-    sort_order: Date.now()
+    sort_order: Date.now(),
+    shipping_required: false,
+    shipped: false,
+    for_billing: false,
+    billed: false
   };
 
   const selectedStatus = normalizeLegacyStatus(item.status);
@@ -526,23 +621,12 @@ function renderModal() {
         <div class="form-grid">
           <div class="field full">
             <label>Build / activity</label>
-            <input
-              name="title"
-              required
-              value="${escapeHtml(item.title)}"
-            >
+            <input name="title" required value="${escapeHtml(item.title)}">
           </div>
 
           <div class="field">
             <label>Week</label>
-            <input
-              name="week"
-              required
-              type="number"
-              min="1"
-              max="53"
-              value="${item.week}"
-            >
+            <input name="week" required type="number" min="1" max="53" value="${item.week}">
           </div>
 
           <div class="field">
@@ -569,12 +653,48 @@ function renderModal() {
             <label>Notes</label>
             <textarea name="notes">${escapeHtml(item.notes || '')}</textarea>
           </div>
+
+          <div class="field full">
+            <label>Shipping & Billing</label>
+
+            <div class="check-grid">
+              <label class="check-card">
+                <input type="checkbox" name="shipping_required" ${item.shipping_required ? 'checked' : ''}>
+                <span>
+                  <strong>📦 Shipping required</strong>
+                  <small>Build needs to be packed or shipped.</small>
+                </span>
+              </label>
+
+              <label class="check-card">
+                <input type="checkbox" name="shipped" ${item.shipped ? 'checked' : ''}>
+                <span>
+                  <strong>✓ Shipped</strong>
+                  <small>Shipment has been completed.</small>
+                </span>
+              </label>
+
+              <label class="check-card">
+                <input type="checkbox" name="for_billing" ${item.for_billing ? 'checked' : ''}>
+                <span>
+                  <strong>🧾 For billing</strong>
+                  <small>Ready for the billing process.</small>
+                </span>
+              </label>
+
+              <label class="check-card">
+                <input type="checkbox" name="billed" ${item.billed ? 'checked' : ''}>
+                <span>
+                  <strong>✓ Billed</strong>
+                  <small>Billing has been completed.</small>
+                </span>
+              </label>
+            </div>
+          </div>
         </div>
 
         <div class="modal-actions">
-          <button type="button" class="btn" data-action="close-modal">
-            Cancel
-          </button>
+          <button type="button" class="btn" data-action="close-modal">Cancel</button>
           <button class="btn primary">Save</button>
         </div>
       </form>
@@ -807,6 +927,9 @@ async function submitItem(event) {
     item => String(item.id) === String(form.get('id'))
   );
 
+  const shipped = form.get('shipped') === 'on';
+  const billed = form.get('billed') === 'on';
+
   const item = {
     ...(existing || {}),
     id: form.get('id') || undefined,
@@ -815,7 +938,13 @@ async function submitItem(event) {
     day: form.get('day'),
     status: form.get('status'),
     notes: form.get('notes').trim(),
-    sort_order: existing?.sort_order || Date.now()
+    sort_order: existing?.sort_order || Date.now(),
+    shipping_required:
+      form.get('shipping_required') === 'on' || shipped,
+    shipped,
+    for_billing:
+      form.get('for_billing') === 'on' || billed,
+    billed
   };
 
   try {
@@ -857,13 +986,28 @@ async function importJson(event) {
 
     if (hasSupabase) {
       const rows = parsed.map(
-        ({ title, week, day, status, notes, sort_order }) => ({
+        ({
+          title,
+          week,
+          day,
+          status,
+          notes,
+          sort_order,
+          shipping_required,
+          shipped,
+          for_billing,
+          billed
+        }) => ({
           title,
           week: Number(week),
           day,
           status: normalizeLegacyStatus(status),
           notes: notes || '',
-          sort_order: Number(sort_order || Date.now())
+          sort_order: Number(sort_order || Date.now()),
+          shipping_required: Boolean(shipping_required),
+          shipped: Boolean(shipped),
+          for_billing: Boolean(for_billing),
+          billed: Boolean(billed)
         })
       );
 
@@ -874,7 +1018,8 @@ async function importJson(event) {
     } else {
       state.items = parsed.map(item => ({
         ...item,
-        status: normalizeLegacyStatus(item.status)
+        status: normalizeLegacyStatus(item.status),
+        ...normalizeTracking(item)
       }));
 
       localSave();
