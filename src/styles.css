@@ -156,16 +156,85 @@ button { cursor: pointer; }
 .summary-dot.status-delayed { background: #dc2626; }
 .summary-dot.status-on-leave { background: #94a3b8; }
 
-.quick-notes ul {
-  margin: 0;
-  padding-left: 18px;
-  color: #475569;
-  font-size: .8rem;
-  line-height: 1.5;
+
+.quick-notes-card {
+  padding-bottom: 10px;
 }
 
-.quick-notes li + li {
-  margin-top: 6px;
+.quick-notes-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.quick-notes-heading h3 {
+  margin: 0;
+}
+
+.quick-note-add {
+  padding: 6px 9px;
+  font-size: .74rem;
+  background: #e8eef5;
+}
+
+.quick-notes-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 420px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.quick-note-item {
+  padding: 10px;
+  border: 1px solid #d7e0ea;
+  border-left: 4px solid #f59e0b;
+  border-radius: 8px;
+  background: #fffaf0;
+}
+
+.quick-note-text {
+  color: #334155;
+  font-size: .79rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.quick-note-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.quick-note-link {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: #0065bd;
+  font-size: .73rem;
+  font-weight: 700;
+}
+
+.quick-note-link:hover {
+  text-decoration: underline;
+}
+
+.quick-note-link.delete {
+  color: #b91c1c;
+}
+
+.quick-note-empty {
+  color: #64748b;
+  font-size: .78rem;
+  padding: 5px 0;
+}
+
+.quick-note-modal textarea {
+  min-height: 160px;
 }
 
 .modal-backdrop { position: fixed; inset: 0; background: rgba(15,23,42,.48); display: grid; place-items: center; padding: 18px; z-index: 10; overflow-y: auto; }
