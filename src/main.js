@@ -40,7 +40,8 @@ const state = {
   modal: null,
   busy: false,
   message: '',
-  draggedId: null
+  draggedId: null,
+  plannerNotes: []
 };
 
 const localKey = 'leu-build-planner-items-v1';
@@ -164,6 +165,116 @@ function getVisibleSummary() {
     forBilling: items.filter(item => item.for_billing && !item.billed).length,
     billed: items.filter(item => item.billed).length
   };
+}
+
+
+async function loadPlannerNotes() {
+  if (!hasSupabase) {
+    state.plannerNotes = JSON.parse(
+      localStorage.getItem('leu-build-planner-quick-notes-v1') || '[]'
+    );
+    return;
+  }
+
+  const { data, error } = await supabase
+    .from('planner_notes')
+    .select('*')
+    .order('created_at', { ascending: false });
+
+  if (error) {
+    state.message = `Could not load quick notes: ${error.message}`;
+    return;
+  }
+
+  state.plannerNotes = data || [];
+}
+
+function saveLocalPlannerNotes() {
+  localStorage.setItem(
+    'leu-build-planner-quick-notes-v1',
+    JSON.stringify(state.plannerNotes)
+  );
+}
+
+async function savePlannerNote(note) {
+  if (!isAdmin()) return;
+
+  const text = String(note.note || '').trim();
+  if (!text) throw new Error('Note cannot be empty.');
+
+  if (!hasSupabase) {
+    if (note.id) {
+      const index = state.plannerNotes.findIndex(
+        item => String(item.id) === String(note.id)
+      );
+
+      if (index >= 0) {
+        state.plannerNotes[index] = {
+          ...state.plannerNotes[index],
+          note: text,
+          updated_at: new Date().toISOString()
+        };
+      }
+    } else {
+      state.plannerNotes.unshift({
+        id: crypto.randomUUID(),
+        note: text,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      });
+    }
+
+    saveLocalPlannerNotes();
+    return;
+  }
+
+  if (note.id) {
+    const { error } = await supabase
+      .from('planner_notes')
+      .update({
+        note: text,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', note.id);
+
+    if (error) throw error;
+  } else {
+    const { error } = await supabase
+      .from('planner_notes')
+      .insert({ note: text });
+
+    if (error) throw error;
+  }
+
+  await loadPlannerNotes();
+}
+
+async function deletePlannerNote(id) {
+  if (!isAdmin()) return;
+
+  if (!confirm('Delete this quick note?')) return;
+
+  if (!hasSupabase) {
+    state.plannerNotes = state.plannerNotes.filter(
+      note => String(note.id) !== String(id)
+    );
+    saveLocalPlannerNotes();
+    render();
+    return;
+  }
+
+  const { error } = await supabase
+    .from('planner_notes')
+    .delete()
+    .eq('id', id);
+
+  if (error) {
+    setMessage(error.message);
+    return;
+  }
+
+  await loadPlannerNotes();
+  render();
 }
 
 async function loadItems() {
@@ -365,6 +476,34 @@ function renderSummarySidebar() {
     </div>
   `).join('');
 
+  const quickNotes = state.plannerNotes.length
+    ? state.plannerNotes.map(note => `
+        <div class="quick-note-item">
+          <div class="quick-note-text">${escapeHtml(note.note)}</div>
+
+          ${
+            isAdmin()
+              ? `
+                <div class="quick-note-actions">
+                  <button
+                    class="quick-note-link"
+                    data-action="edit-quick-note"
+                    data-id="${note.id}"
+                  >Edit</button>
+
+                  <button
+                    class="quick-note-link delete"
+                    data-action="delete-quick-note"
+                    data-id="${note.id}"
+                  >Delete</button>
+                </div>
+              `
+              : ''
+          }
+        </div>
+      `).join('')
+    : `<div class="quick-note-empty">No quick notes yet.</div>`;
+
   return `
     <aside class="summary-sidebar">
       <section class="summary-card">
@@ -396,13 +535,20 @@ function renderSummarySidebar() {
         </div>
       </section>
 
-      <section class="summary-card quick-notes">
-        <h3>Quick Notes</h3>
-        <ul>
-          <li>Counts include all five visible weeks.</li>
-          <li>Drag cards between days or reorder builds within the same day.</li>
-          <li>Shipping and billing counts update automatically.</li>
-        </ul>
+      <section class="summary-card quick-notes-card">
+        <div class="quick-notes-heading">
+          <h3>Quick Notes</h3>
+
+          ${
+            isAdmin()
+              ? `<button class="btn quick-note-add" data-action="add-quick-note">+ Add</button>`
+              : ''
+          }
+        </div>
+
+        <div class="quick-notes-list">
+          ${quickNotes}
+        </div>
       </section>
     </aside>
   `;
@@ -596,6 +742,40 @@ function renderModal() {
     `;
   }
 
+
+  if (state.modal.type === 'quick-note') {
+    const note = state.modal.note || { id: '', note: '' };
+
+    return `
+      <div class="modal-backdrop">
+        <form class="modal quick-note-modal" id="quick-note-form">
+          <h2>${note.id ? 'Edit quick note' : 'Add quick note'}</h2>
+
+          <input type="hidden" name="id" value="${note.id || ''}">
+
+          <div class="field">
+            <label>Note</label>
+            <textarea
+              name="note"
+              required
+              placeholder="Type anything you want the team to see..."
+            >${escapeHtml(note.note || '')}</textarea>
+          </div>
+
+          <div class="modal-actions">
+            <button
+              type="button"
+              class="btn"
+              data-action="close-modal"
+            >Cancel</button>
+
+            <button class="btn primary">Save note</button>
+          </div>
+        </form>
+      </div>
+    `;
+  }
+
   const item = state.modal.item || {
     title: '',
     week: state.startWeek,
@@ -716,6 +896,10 @@ function bindEvents() {
   document
     .querySelector('#item-form')
     ?.addEventListener('submit', submitItem);
+
+  document
+    .querySelector('#quick-note-form')
+    ?.addEventListener('submit', submitQuickNote);
 
   document
     .querySelector('#json-file')
@@ -851,6 +1035,26 @@ async function handleAction(event) {
     removeItem(event.currentTarget.dataset.id);
   }
 
+  if (action === 'add-quick-note') {
+    state.modal = { type: 'quick-note' };
+    render();
+  }
+
+  if (action === 'edit-quick-note') {
+    state.modal = {
+      type: 'quick-note',
+      note: state.plannerNotes.find(
+        note => String(note.id) === String(event.currentTarget.dataset.id)
+      )
+    };
+    render();
+  }
+
+  if (action === 'delete-quick-note') {
+    await deletePlannerNote(event.currentTarget.dataset.id);
+  }
+
+
   if (action === 'close-modal') {
     state.modal = null;
     render();
@@ -916,6 +1120,26 @@ async function login(event) {
     state.user = data.user;
     state.modal = null;
     render();
+  }
+}
+
+
+async function submitQuickNote(event) {
+  event.preventDefault();
+
+  const form = new FormData(event.currentTarget);
+
+  try {
+    await savePlannerNote({
+      id: form.get('id') || undefined,
+      note: form.get('note')
+    });
+
+    state.modal = null;
+    render();
+    setMessage('Quick note saved.');
+  } catch (error) {
+    setMessage(error.message);
   }
 }
 
@@ -1075,7 +1299,12 @@ async function init() {
     });
   }
 
-  await loadItems();
+  await Promise.all([
+    loadItems(),
+    loadPlannerNotes()
+  ]);
+
+  render();
 }
 
 init();
