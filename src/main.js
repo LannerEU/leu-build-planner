@@ -33,9 +33,28 @@ const sampleItems = [
   billed: false
 }));
 
+function getCurrentIsoWeek() {
+  const now = new Date();
+
+  const date = new Date(
+    Date.UTC(now.getFullYear(), now.getMonth(), now.getDate())
+  );
+
+  const day = date.getUTCDay() || 7;
+  date.setUTCDate(date.getUTCDate() + 4 - day);
+
+  const yearStart = new Date(
+    Date.UTC(date.getUTCFullYear(), 0, 1)
+  );
+
+  return Math.ceil(
+    (((date - yearStart) / 86400000) + 1) / 7
+  );
+}
+
 const state = {
   items: [],
-  startWeek: 32,
+  startWeek: getCurrentIsoWeek(),
   user: null,
   modal: null,
   busy: false,
