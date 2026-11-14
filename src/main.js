@@ -151,7 +151,8 @@ function formatPlannerDate(week, day) {
 
   return new Intl.DateTimeFormat('en-GB', {
     day: '2-digit',
-    month: '2-digit'
+    month: '2-digit',
+    timeZone: 'UTC'
   }).format(date);
 }
 
